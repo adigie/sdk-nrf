@@ -8,7 +8,9 @@
 #include "app/group_data_provider.h"
 #include "app/task_executor.h"
 
+#include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
+#include <credentials/FabricTable.h>
 #include <platform/CHIPDeviceLayer.h>
 
 #include <zephyr/logging/log.h>

@@ -5,6 +5,7 @@
  */
 
 #include <app/server/Server.h>
+#include <platform/CHIPDeviceLayer.h>
 #include <platform/nrfconnect/Reboot.h>
 
 #include "app/group_data_provider.h"

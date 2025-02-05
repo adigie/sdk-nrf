@@ -8,6 +8,7 @@
 
 #include "app/group_data_provider.h"
 
+#include <credentials/FabricTable.h>
 #include <crypto/OperationalKeystore.h>
 #include <crypto/PersistentStorageOperationalKeystore.h>
 

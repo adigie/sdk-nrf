@@ -11,6 +11,7 @@
 #include <DeviceInfoProviderImpl.h>
 #include <app/clusters/network-commissioning/network-commissioning.h>
 #include <app/server/Server.h>
+#include <app/server/ServerInitParams.h>
 #include <lib/core/Optional.h>
 #include <lib/support/Variant.h>
 #include <platform/PlatformManager.h>

@@ -7,7 +7,9 @@
 #include "test_shell.h"
 
 #include <app/server/Server.h>
+#include <credentials/FabricTable.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <protocols/secure_channel/SessionResumptionStorage.h>
 
 using namespace chip;
 using namespace chip::app;
@@ -36,7 +38,6 @@ static CHIP_ERROR TestCommandHandler(int argc, char **argv)
 	return sShellTestSubCommands.ExecCommand(argc, argv);
 }
 
-
 static CHIP_ERROR ResumptionStorageHelpHandler(int argc, char **argv)
 {
 	sShellResumptionStorageSubCommands.ForEachCommand(Shell::PrintCommandHelp, nullptr);
@@ -51,17 +52,16 @@ static CHIP_ERROR ResumptionStorageHandler(int argc, char **argv)
 	return sShellResumptionStorageSubCommands.ExecCommand(argc, argv);
 }
 
-static CHIP_ERROR ClearResumptionStorageHandler(int argc, char ** argv)
+static CHIP_ERROR ClearResumptionStorageHandler(int argc, char **argv)
 {
 	CHIP_ERROR error = CHIP_NO_ERROR;
 	FabricId fabricId = kUndefinedFabricId;
-	SessionResumptionStorage * storage = Server::GetInstance().GetSessionResumptionStorage();
+	SessionResumptionStorage *storage = Server::GetInstance().GetSessionResumptionStorage();
 
 	VerifyOrExit(storage != nullptr, error = CHIP_ERROR_INCORRECT_STATE);
 	VerifyOrExit(argc < 2, error = CHIP_ERROR_INVALID_ARGUMENT);
 
-	if (argc == 1)
-	{
+	if (argc == 1) {
 		char *endptr;
 
 		fabricId = static_cast<FabricId>(strtoull(argv[0], &endptr, 0));
@@ -70,7 +70,7 @@ static CHIP_ERROR ClearResumptionStorageHandler(int argc, char ** argv)
 
 	streamer_printf(streamer_get(), "Clearing resumption storage.\r\n");
 
-	for (auto & fabricInfo : Server::GetInstance().GetFabricTable()) {
+	for (auto &fabricInfo : Server::GetInstance().GetFabricTable()) {
 		if (argc == 0 || fabricInfo.GetFabricId() == fabricId) {
 			SuccessOrExit(error = storage->DeleteAll(fabricInfo.GetFabricIndex()));
 
@@ -92,11 +92,13 @@ void RegisterTestCommands()
 	};
 
 	static const shell_command_t sResumptionStorageSubCommands[] = {
-		{ &ResumptionStorageHelpHandler, "help", "Resumption storage commands. "
-							 "Usage : test restorage <subcommand>" },
-		{ &ClearResumptionStorageHandler, "clear", "Clears resumption storage for fabric-id. If fabric-id is "
-							   "not specified, clears resumption storage for all fabrics. "
-							   "Usage : test restorage clear [fabric-id]" },
+		{ &ResumptionStorageHelpHandler, "help",
+		  "Resumption storage commands. "
+		  "Usage : test restorage <subcommand>" },
+		{ &ClearResumptionStorageHandler, "clear",
+		  "Clears resumption storage for fabric-id. If fabric-id is "
+		  "not specified, clears resumption storage for all fabrics. "
+		  "Usage : test restorage clear [fabric-id]" },
 	};
 
 	static const shell_command_t sTestCommand = { &TestCommandHandler, "test", "Test - specific commands" };
