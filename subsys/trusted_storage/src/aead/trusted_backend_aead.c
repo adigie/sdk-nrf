@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
+#include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/logging/log.h>
 #include <mbedtls/platform_util.h>
@@ -47,6 +48,11 @@ typedef struct stored_object {
 	uint8_t data[AEAD_MAX_BUF_SIZE];
 } stored_object;
 
+#ifdef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
+K_MUTEX_DEFINE(object_data_mutex);
+static stored_object object_data;
+#endif
+
 psa_status_t trusted_get_info(const psa_storage_uid_t uid, const char *prefix,
 			      struct psa_storage_info_t *p_info)
 {
@@ -77,7 +83,10 @@ psa_status_t trusted_get(const psa_storage_uid_t uid, const char *prefix, size_t
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	uint8_t key_buf[AEAD_KEY_SIZE + 1];
 	size_t out_length;
+
+#ifndef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
 	stored_object object_data;
+#endif
 
 	if ((p_data == NULL && data_length != 0) || p_data_length == NULL || uid == INVALID_UID) {
 		return PSA_ERROR_INVALID_ARGUMENT;
@@ -98,11 +107,15 @@ psa_status_t trusted_get(const psa_storage_uid_t uid, const char *prefix, size_t
 		return status;
 	}
 
+#ifdef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
+	k_mutex_lock(&object_data_mutex, K_FOREVER);
+#endif
+
 	/* Retrieve object from storage */
 	status = storage_get_object(uid, prefix, (void *)&object_data, sizeof(object_data),
 				    &out_length);
 	if (status != PSA_SUCCESS) {
-		return status;
+		goto exit;
 	}
 
 	status = trusted_storage_aead_decrypt(
@@ -135,6 +148,11 @@ clean_up:
 	mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
 	mbedtls_platform_zeroize(&object_data, sizeof(object_data));
 
+exit:
+#ifdef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
+	k_mutex_unlock(&object_data_mutex);
+#endif
+
 	return status;
 }
 
@@ -144,7 +162,10 @@ psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	uint8_t key_buf[AEAD_KEY_SIZE + 1];
 	size_t out_length = 0;
+
+#ifndef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
 	stored_object object_data;
+#endif
 
 	if (uid == INVALID_UID || (p_data == NULL && data_length != 0)) {
 		return PSA_ERROR_INVALID_ARGUMENT;
@@ -158,18 +179,23 @@ psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
+#ifdef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
+	k_mutex_lock(&object_data_mutex, K_FOREVER);
+#endif
+
 	/* Get flags */
 	status = storage_get_object(uid, prefix, (void *)&object_data.header,
 				    sizeof(object_data.header), &out_length);
 
 	if (status != PSA_SUCCESS && status != PSA_ERROR_DOES_NOT_EXIST) {
-		return status;
+		goto exit;
 	}
 
 	/* Do not allow to write new values if WRITE_ONCE flag is set */
 	if (status == PSA_SUCCESS &&
 	    (object_data.header.create_flags & PSA_STORAGE_FLAG_WRITE_ONCE) != 0) {
-		return PSA_ERROR_NOT_PERMITTED;
+		status = PSA_ERROR_NOT_PERMITTED;
+		goto exit;
 	}
 
 	/* Get AEAD key */
@@ -214,6 +240,11 @@ cleanup_objects:
 
 cleanup:
 	mbedtls_platform_zeroize(&object_data, sizeof(object_data));
+
+exit:
+#ifdef CONFIG_TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
+	k_mutex_unlock(&object_data_mutex);
+#endif
 
 	return status;
 }

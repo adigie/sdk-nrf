@@ -145,6 +145,13 @@ config TRUSTED_STORAGE_BACKEND_AEAD_KEY_CUSTOM
 
 endchoice # TRUSTED_STORAGE_BACKEND_AEAD_KEY
 
+config TRUSTED_STORAGE_BACKEND_AEAD_USE_STATIC_OBJECT
+	bool "Use static object"
+	# TODO: remove default
+	default y
+	help
+	  Use statically allocated object when accessing secure storage.
+
 endif # TRUSTED_STORAGE_BACKEND_AEAD
 
 endchoice # TRUSTED_STORAGE_BACKEND
