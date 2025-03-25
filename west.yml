@@ -162,7 +162,8 @@ manifest:
     - name: matter
       repo-path: sdk-connectedhomeip
       path: modules/lib/matter
-      revision: v2.9.0
+      remote: arbl
+      revision: pretty_print_march
       west-commands: scripts/west/west-commands.yml
       submodules:
         - name: nlio
