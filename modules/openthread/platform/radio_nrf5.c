@@ -138,6 +138,7 @@ struct nrf5_header_ie {
 	union {
 		struct nrf5_header_ie_link_metrics link_metrics;
 		struct nrf5_header_ie_csl_reduced csl_reduced;
+		uint8_t _dummy[7];
 	} content;
 } __packed;
 
@@ -1245,7 +1246,7 @@ otError otPlatRadioReceiveAt(otInstance *aInstance, uint8_t aChannel, uint32_t a
 	 * anchor_time will be used for calculations.
 	 */
 	result = nrf_802154_receive_at(convert_32bit_us_wrapped_to_64bit_ns(aStart) / NSEC_PER_USEC,
-				       aDuration / NSEC_PER_USEC, aChannel, DRX_SLOT_RX);
+				       aDuration, aChannel, DRX_SLOT_RX);
 
 	return result ? OT_ERROR_FAILED : OT_ERROR_NONE;
 }
