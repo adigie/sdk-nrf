@@ -74,11 +74,11 @@ bool AccessManager<CRED_BIT_MASK>::ValidatePIN(const Optional<ByteSpan> &pinCode
 
 		uint32_t credentialUserId;
 		if (GetCredentialUserId(index, CredentialTypeEnum::kPin, credentialUserId) == CHIP_NO_ERROR) {
-			result = ValidatePINResult{
+			result = Nullable<ValidatePINResult>{ ValidatePINResult{
 				.mUserId = static_cast<uint16_t>(credentialUserId),
 				.mCredential =
 					LockOpCredentials{ CredentialTypeEnum::kPin, static_cast<uint16_t>(index) },
-			};
+			} };
 		} else {
 			result = {};
 		}
