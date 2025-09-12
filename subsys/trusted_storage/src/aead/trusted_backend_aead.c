@@ -11,7 +11,8 @@ LOG_MODULE_REGISTER(internal_trusted_aead, CONFIG_TRUSTED_STORAGE_LOG_LEVEL);
 
 #include <string.h>
 
-#include "../trusted_storage_backend.h"
+#include <psa/trusted_storage_backend.h>
+
 #include "../storage_backend.h"
 #include "aead_key.h"
 #include "aead_nonce.h"
@@ -47,19 +48,20 @@ typedef struct stored_object {
 	uint8_t data[AEAD_MAX_BUF_SIZE];
 } stored_object;
 
-psa_status_t trusted_get_info(const psa_storage_uid_t uid, const char *prefix,
+psa_status_t trusted_get_info(storage_path_func get_path_func, void *func_arg,
 			      struct psa_storage_info_t *p_info)
 {
 	psa_status_t status;
 	size_t out_length;
 	stored_object_header header;
 
-	if (p_info == NULL || uid == INVALID_UID) {
+	if (p_info == NULL) {
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
 	/* Get size & flags */
-	status = storage_get_object(uid, prefix, (void *)&header, sizeof(header), &out_length);
+	status = storage_get_object(get_path_func, func_arg, (void *)&header, sizeof(header),
+				    &out_length);
 	if (status != PSA_SUCCESS) {
 		return status;
 	}
@@ -71,15 +73,16 @@ psa_status_t trusted_get_info(const psa_storage_uid_t uid, const char *prefix,
 	return PSA_SUCCESS;
 }
 
-psa_status_t trusted_get(const psa_storage_uid_t uid, const char *prefix, size_t data_offset,
-			 size_t data_length, void *p_data, size_t *p_data_length)
+psa_status_t trusted_get(trusted_path_func get_path_func, trusted_key_func get_key_func,
+			 void *func_arg, size_t data_offset, size_t data_length, void *p_data,
+			 size_t *p_data_length)
 {
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	uint8_t key_buf[AEAD_KEY_SIZE + 1];
 	size_t out_length;
 	stored_object object_data;
 
-	if ((p_data == NULL && data_length != 0) || p_data_length == NULL || uid == INVALID_UID) {
+	if ((p_data == NULL && data_length != 0) || p_data_length == NULL || get_key_func == NULL) {
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
@@ -93,14 +96,14 @@ psa_status_t trusted_get(const psa_storage_uid_t uid, const char *prefix, size_t
 	}
 
 	/* Get AEAD key */
-	status = trusted_storage_get_key(uid, key_buf, AEAD_KEY_SIZE);
+	status = get_key_func(func_arg, key_buf, AEAD_KEY_SIZE);
 	if (status != PSA_SUCCESS) {
 		return status;
 	}
 
 	/* Retrieve object from storage */
-	status = storage_get_object(uid, prefix, (void *)&object_data, sizeof(object_data),
-				    &out_length);
+	status = storage_get_object(get_path_func, func_arg, (void *)&object_data,
+				    sizeof(object_data), &out_length);
 	if (status != PSA_SUCCESS) {
 		return status;
 	}
@@ -138,15 +141,16 @@ clean_up:
 	return status;
 }
 
-psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t data_length,
-			 const void *p_data, psa_storage_create_flags_t create_flags)
+psa_status_t trusted_set(trusted_path_func get_path_func, trusted_key_func get_key_func,
+			 void *func_arg, size_t data_length, const void *p_data,
+			 psa_storage_create_flags_t create_flags)
 {
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	uint8_t key_buf[AEAD_KEY_SIZE + 1];
 	size_t out_length = 0;
 	stored_object object_data;
 
-	if (uid == INVALID_UID || (p_data == NULL && data_length != 0)) {
+	if ((p_data == NULL && data_length != 0) || get_key_func == NULL) {
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
@@ -159,7 +163,7 @@ psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t
 	}
 
 	/* Get flags */
-	status = storage_get_object(uid, prefix, (void *)&object_data.header,
+	status = storage_get_object(get_path_func, func_arg, (void *)&object_data.header,
 				    sizeof(object_data.header), &out_length);
 
 	if (status != PSA_SUCCESS && status != PSA_ERROR_DOES_NOT_EXIST) {
@@ -173,7 +177,7 @@ psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t
 	}
 
 	/* Get AEAD key */
-	status = trusted_storage_get_key(uid, key_buf, AEAD_KEY_SIZE);
+	status = get_key_func(func_arg, key_buf, AEAD_KEY_SIZE);
 	if (status != PSA_SUCCESS) {
 		goto cleanup_objects;
 	}
@@ -199,7 +203,7 @@ psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t
 	}
 
 	/* Write data */
-	status = storage_set_object(uid, prefix, &object_data,
+	status = storage_set_object(get_path_func, func_arg, &object_data,
 				    offsetof(stored_object, data) + out_length);
 	if (status != PSA_SUCCESS) {
 		goto cleanup_objects;
@@ -210,7 +214,7 @@ psa_status_t trusted_set(const psa_storage_uid_t uid, const char *prefix, size_t
 cleanup_objects:
 	/* Remove object if an error occurs */
 	LOG_DBG("trusted_set cleanup. status %d", status);
-	storage_remove_object(uid, prefix);
+	storage_remove_object(get_path_func, func_arg);
 
 cleanup:
 	mbedtls_platform_zeroize(&object_data, sizeof(object_data));
@@ -218,18 +222,15 @@ cleanup:
 	return status;
 }
 
-psa_status_t trusted_remove(const psa_storage_uid_t uid, const char *prefix)
+psa_status_t trusted_remove(trusted_path_func get_path_func, void *func_arg)
 {
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	size_t out_length;
 	stored_object_header header;
 
-	if (uid == INVALID_UID) {
-		return PSA_ERROR_INVALID_ARGUMENT;
-	}
-
 	/* Get flags */
-	status = storage_get_object(uid, prefix, (void *)&header, sizeof(header), &out_length);
+	status = storage_get_object(get_path_func, func_arg, (void *)&header, sizeof(header),
+				    &out_length);
 	if (status != PSA_SUCCESS) {
 		return status;
 	}
@@ -238,7 +239,7 @@ psa_status_t trusted_remove(const psa_storage_uid_t uid, const char *prefix)
 		return PSA_ERROR_NOT_PERMITTED;
 	}
 
-	return storage_remove_object(uid, prefix);
+	return storage_remove_object(get_path_func, func_arg);
 }
 
 uint32_t trusted_get_support(void)
@@ -246,20 +247,26 @@ uint32_t trusted_get_support(void)
 	return 0;
 }
 
-psa_status_t trusted_create(const psa_storage_uid_t uid, size_t capacity,
+psa_status_t trusted_create(trusted_path_func get_path_func, trusted_key_func get_key_func,
+			    void *func_arg, size_t capacity,
 			    psa_storage_create_flags_t create_flags)
 {
 
-	ARG_UNUSED(uid);
+	ARG_UNUSED(get_path_func);
+	ARG_UNUSED(get_key_func);
+	ARG_UNUSED(func_arg);
 	ARG_UNUSED(capacity);
 	ARG_UNUSED(create_flags);
 	return PSA_ERROR_NOT_SUPPORTED;
 }
 
-psa_status_t trusted_set_extended(const psa_storage_uid_t uid, size_t data_offset,
-				  size_t data_length, const void *p_data)
+psa_status_t trusted_set_extended(trusted_path_func get_path_func, trusted_key_func get_key_func,
+				  void *func_arg, size_t data_offset, size_t data_length,
+				  const void *p_data)
 {
-	ARG_UNUSED(uid);
+	ARG_UNUSED(get_path_func);
+	ARG_UNUSED(get_key_func);
+	ARG_UNUSED(func_arg);
 	ARG_UNUSED(data_offset);
 	ARG_UNUSED(data_length);
 	ARG_UNUSED(p_data);

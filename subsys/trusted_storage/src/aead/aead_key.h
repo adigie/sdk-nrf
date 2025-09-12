@@ -12,6 +12,7 @@
 
 #define AEAD_KEY_SIZE (32)
 
-psa_status_t trusted_storage_get_key(psa_storage_uid_t uid, uint8_t *key_buf, size_t key_length);
+psa_status_t trusted_storage_get_key(const uint8_t *label, size_t label_size, uint8_t *key_buf,
+				     size_t key_length);
 
 #endif /* __TRUSTED_STORAGE_AUTH_CRYPT_KEY_H_ */

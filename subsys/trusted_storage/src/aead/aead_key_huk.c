@@ -15,7 +15,8 @@
 #define KEYSLOT HUK_KEYSLOT_KDR
 #endif
 
-psa_status_t trusted_storage_get_key(psa_storage_uid_t uid, uint8_t *key_buf, size_t key_length)
+psa_status_t trusted_storage_get_key(const uint8_t *label, size_t label_size, uint8_t *key_buf,
+				     size_t key_length)
 {
 
 	int result;
@@ -28,8 +29,7 @@ psa_status_t trusted_storage_get_key(psa_storage_uid_t uid, uint8_t *key_buf, si
 		return PSA_ERROR_BAD_STATE;
 	}
 
-	result = hw_unique_key_derive_key(KEYSLOT, NULL, 0, (uint8_t *)&uid, sizeof(uid), key_buf,
-					  key_length);
+	result = hw_unique_key_derive_key(KEYSLOT, NULL, 0, label, label_size, key_buf, key_length);
 	if (result != HW_UNIQUE_KEY_SUCCESS) {
 		return PSA_ERROR_BAD_STATE;
 	}

@@ -28,9 +28,8 @@ struct load_object_info {
 	int ret;
 };
 
-/* Helper to fill filename with a suffix */
-static psa_status_t create_filename(char *filename, const size_t filename_size, const char *prefix,
-				    const psa_storage_uid_t uid)
+psa_status_t storage_create_filename_from_uid(char *filename, const size_t filename_size,
+					      const char *prefix, const psa_storage_uid_t uid)
 {
 	int ret;
 
@@ -81,7 +80,7 @@ static psa_status_t error_to_psa_error(int errorno)
 	}
 }
 
-psa_status_t storage_get_object(const psa_storage_uid_t uid, const char *prefix, void *object_data,
+psa_status_t storage_get_object(storage_path_func get_path_func, void *arg, void *object_data,
 				const size_t object_size, size_t *object_length)
 {
 	char path[TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1];
@@ -89,13 +88,11 @@ psa_status_t storage_get_object(const psa_storage_uid_t uid, const char *prefix,
 	int ret;
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 
-	if (object_size == 0 || object_data == NULL || prefix == NULL) {
+	if (object_size == 0 || object_data == NULL || get_path_func == NULL) {
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
-	status = create_filename(path, TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1,
-				 prefix, uid);
-
+	status = get_path_func(arg, path, TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1);
 	if (status != PSA_SUCCESS) {
 		return status;
 	}
@@ -123,18 +120,17 @@ psa_status_t storage_get_object(const psa_storage_uid_t uid, const char *prefix,
 	return PSA_SUCCESS;
 }
 
-psa_status_t storage_set_object(const psa_storage_uid_t uid, const char *prefix,
-				const void *object_data, const size_t object_size)
+psa_status_t storage_set_object(storage_path_func get_path_func, void *arg, const void *object_data,
+				const size_t object_size)
 {
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	char path[TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1];
 
-	if (object_size == 0 || object_data == NULL || prefix == NULL) {
+	if (object_size == 0 || object_data == NULL || get_path_func == NULL) {
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
-	status = create_filename(path, TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1,
-				 prefix, uid);
+	status = get_path_func(arg, path, TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1);
 
 	LOG_DBG("Set object with filename %s. Size: %zd", path, object_size);
 
@@ -145,18 +141,16 @@ psa_status_t storage_set_object(const psa_storage_uid_t uid, const char *prefix,
 	return error_to_psa_error(settings_save_one(path, object_data, object_size));
 }
 
-psa_status_t storage_remove_object(const psa_storage_uid_t uid, const char *prefix)
+psa_status_t storage_remove_object(storage_path_func get_path_func, void *arg)
 {
 	psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
 	char path[TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1];
 
-	if (prefix == NULL) {
+	if (get_path_func == NULL) {
 		return PSA_ERROR_INVALID_ARGUMENT;
 	}
 
-	status = create_filename(path, TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1,
-				 prefix, uid);
-
+	status = get_path_func(arg, path, TRUSTED_STORAGE_SETTINGS_BACKEND_FILENAME_MAX_LENGTH + 1);
 	if (status != PSA_SUCCESS) {
 		return status;
 	}
