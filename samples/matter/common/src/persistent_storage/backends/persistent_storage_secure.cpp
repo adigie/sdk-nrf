@@ -5,221 +5,141 @@
  */
 
 #include "persistent_storage_secure.h"
+#include "custom_storage.h"
+
+#include <zephyr/settings/settings.h>
+
+namespace
+{
+struct DeleteSubtreeEntry {
+	const char *prefix;
+	int result;
+};
+
+int DeleteSubtreeCallback(const char *name, size_t entrySize, settings_read_cb readCb, void *cbArg, void *param)
+{
+	DeleteSubtreeEntry &entry = *static_cast<DeleteSubtreeEntry *>(param);
+	char fullKey[SETTINGS_MAX_NAME_LEN + 1];
+
+	// name comes from Zephyr settings subsystem so it is guaranteed to fit in the buffer.
+	(void)snprintf(fullKey, sizeof(fullKey), "%s/%s", entry.prefix, name);
+	const int result = settings_delete(fullKey);
+
+	// Return the first error, but continue removing remaining keys anyway.
+	if (entry.result == 0) {
+		entry.result = result;
+	}
+
+	return 0;
+}
+} // namespace
 
 namespace Nrf
 {
 
-PersistentStorageSecure::UidMap PersistentStorageSecure::sUidMap{};
-PersistentStorageSecure::Byte PersistentStorageSecure::sSerializedMapBuff[kMaxMapSerializationBufferSize]{};
-
 PSErrorCode PersistentStorageSecure::_SecureInit(PersistentStorageNode *rootNode)
 {
-	// Ignored in this backend
-	(void)rootNode;
+	if (rootNode == nullptr) {
+		return PSErrorCode::Failure;
+	}
 
-	return LoadUIDMap();
+	mRootNode = rootNode;
+
+	return settings_load() ? PSErrorCode::Failure : PSErrorCode::Success;
 }
 
 PSErrorCode PersistentStorageSecure::_SecureStore(PersistentStorageNode *node, const void *data, size_t dataSize)
 {
-	/* Check if we can store more assets and return prematurely if the limit has been already reached. */
-	if (kMaxEntriesNumber <= sUidMap.Size()) {
+	if (!data || !node) {
 		return PSErrorCode::Failure;
 	}
 
 	char key[PersistentStorageNode::kMaxKeyNameLength];
 
-	if (node->GetKey(key)) {
-		psa_storage_uid_t uid = UIDFromString(key);
-		psa_status_t status = psa_ps_set(uid, dataSize, data, PSA_STORAGE_FLAG_NONE);
-
-		if (status == PSA_SUCCESS) {
-			if (sUidMap.Insert(uid, StringWrapper(key))) {
-				/* The map has been updated, store it. */
-				if (PSErrorCode::Success != StoreUIDMap()) {
-					/* We cannot store the updated UID map, so it's pointless to keep the data
-					 * associated with calculated UID persistently. */
-					psa_ps_remove(uid);
-				} else {
-					return PSErrorCode::Success;
-				}
-			}
-			/* It fine for the Insert() to fail, in case the given key is already present in the map. */
-			return PSErrorCode::Success;
-		}
+	if (!node->GetKey(key)) {
+		return PSErrorCode::Failure;
 	}
-	return PSErrorCode::Failure;
+
+	psa_status_t status = psa_custom_set(key, dataSize, data, PSA_STORAGE_FLAG_NONE);
+	return (status ? PSErrorCode::Failure : PSErrorCode::Success);
 }
 
 PSErrorCode PersistentStorageSecure::_SecureLoad(PersistentStorageNode *node, void *data, size_t dataMaxSize,
 						 size_t &outSize)
 {
-	psa_storage_uid_t uid;
-	if (HasEntry(node, uid)) {
-		psa_status_t status = psa_ps_get(uid, 0, dataMaxSize, data, &outSize);
-		return (status == PSA_SUCCESS ? PSErrorCode::Success : PSErrorCode::Failure);
+	if (!data || !node) {
+		return PSErrorCode::Failure;
 	}
-	return PSErrorCode::Failure;
+
+	char key[PersistentStorageNode::kMaxKeyNameLength];
+
+	if (!node->GetKey(key)) {
+		return PSErrorCode::Failure;
+	}
+
+	psa_status_t status = psa_custom_get(key, 0, dataMaxSize, data, &outSize);
+	return (status == PSA_SUCCESS ? PSErrorCode::Success : PSErrorCode::Failure);
 }
 
 PSErrorCode PersistentStorageSecure::_SecureHasEntry(PersistentStorageNode *node)
 {
-	psa_storage_uid_t uid;
-	return (HasEntry(node, uid) ? PSErrorCode::Success : PSErrorCode::Failure);
+	if (!node) {
+		return PSErrorCode::Failure;
+	}
+
+	char key[PersistentStorageNode::kMaxKeyNameLength];
+
+	if (!node->GetKey(key)) {
+		return PSErrorCode::Failure;
+	}
+
+	struct psa_storage_info_t info;
+	psa_status_t status = psa_custom_get_info(key, &info);
+	if (status != PSA_SUCCESS || info.size == 0) {
+		return PSErrorCode::Failure;
+	}
+
+	return PSErrorCode::Success;
 }
 
 PSErrorCode PersistentStorageSecure::_SecureRemove(PersistentStorageNode *node)
 {
-	char key[PersistentStorageNode::kMaxKeyNameLength];
-
-	if (node->GetKey(key)) {
-		bool alreadyInTheMap{ false };
-		psa_storage_uid_t uid = UIDFromString(key, &alreadyInTheMap);
-		if (alreadyInTheMap) {
-			psa_status_t status = psa_ps_remove(uid);
-
-			if (status == PSA_SUCCESS) {
-				sUidMap.Erase(uid);
-				return PSErrorCode::Success;
-			}
-		}
+	if (!node) {
+		return PSErrorCode::Failure;
 	}
 
-	return PSErrorCode::Failure;
+	char key[PersistentStorageNode::kMaxKeyNameLength];
+
+	if (!node->GetKey(key)) {
+		return PSErrorCode::Failure;
+	}
+
+	psa_status_t status = psa_custom_remove(key);
+	return (status == PSA_SUCCESS ? PSErrorCode::Success : PSErrorCode::Failure);
 }
 
 PSErrorCode PersistentStorageSecure::_SecureFactoryReset()
 {
-	PSErrorCode error = PSErrorCode::Success;
-
-	// Remove all keys
-	for (auto it = std::begin(sUidMap.mMap); it != std::end(sUidMap.mMap) - sUidMap.FreeSlots(); ++it) {
-		psa_status_t status = psa_ps_remove(it->key);
-		if (status != PSA_SUCCESS) {
-			// Set error but try to remove all keys
-			error = PSErrorCode::Failure;
-		}
-	}
-
-	// Remove UidMap
-	psa_status_t status = psa_ps_remove(kKeyOffset);
-	if (status != PSA_SUCCESS) {
-		error = PSErrorCode::Failure;
-	}
-
-	sUidMap = {};
-
-	return error;
-}
-
-psa_storage_uid_t PersistentStorageSecure::UIDFromString(char *str, bool *alreadyInTheMap)
-{
-	for (auto &it : sUidMap.mMap) {
-		if (it.value == str) {
-			if (alreadyInTheMap) {
-				*alreadyInTheMap = true;
-			}
-			return static_cast<psa_storage_uid_t>(it.key);
-		}
-	}
-
-	/* The first available UID under kKeyOffset is reserved for the UID Map, so we need to include that when storing
-	 * regular keys by adding kMapUidRelativeOffset. */
-	uint16_t slot = sUidMap.GetFirstFreeSlot();
-	if (alreadyInTheMap) {
-		*alreadyInTheMap = false;
-	}
-	return static_cast<psa_storage_uid_t>(slot + kKeyOffset + kMapUidRelativeOffset);
-}
-
-PSErrorCode PersistentStorageSecure::StoreUIDMap()
-{
-	size_t outSize{ 0 };
-	if (PSErrorCode::Success == SerializeUIDMap(sSerializedMapBuff, kMaxMapSerializationBufferSize, outSize)) {
-		psa_status_t status = psa_ps_set(kKeyOffset, outSize, sSerializedMapBuff, PSA_STORAGE_FLAG_NONE);
-		if (status == PSA_SUCCESS) {
-			return PSErrorCode::Success;
-		}
-	}
-	return PSErrorCode::Failure;
-}
-
-PSErrorCode PersistentStorageSecure::SerializeUIDMap(Byte *buff, size_t buffSize, size_t &outSize)
-{
-	size_t keySize{ sizeof(SerializedUIDType) };
-	size_t valueSize{ 0 };
-	UidMap::ElementCounterType offset{ 0 };
-	UidMap::ElementCounterType mapSize = sUidMap.Size();
-
-	if (buffSize < kMaxMapSerializationBufferSize) {
-		return PSErrorCode::Failure;
-	}
-
-	memcpy(buff + offset, &mapSize, sizeof(mapSize));
-	offset += sizeof(mapSize);
-
-	for (auto it = std::begin(sUidMap.mMap); it != std::end(sUidMap.mMap) - sUidMap.FreeSlots(); ++it) {
-		valueSize = strlen(it->value.mStr) + 1;
-		SerializedUIDType keyToSerialize = static_cast<SerializedUIDType>(it->key);
-		memcpy(buff + offset, &keyToSerialize, keySize);
-		offset += keySize;
-		memcpy(buff + offset, it->value.mStr, valueSize);
-		offset += valueSize;
-	}
-	outSize = offset;
-	return PSErrorCode::Success;
-}
-
-PSErrorCode PersistentStorageSecure::LoadUIDMap()
-{
-	size_t outSize{ 0 };
-
-	psa_status_t status = psa_ps_get(kKeyOffset, 0, kMaxMapSerializationBufferSize, sSerializedMapBuff, &outSize);
-
-	if (status == PSA_SUCCESS) {
-		if (PSErrorCode::Success == DeserializeUIDMap(sSerializedMapBuff, kMaxMapSerializationBufferSize)) {
-			return PSErrorCode::Success;
-		}
-	}
-	return PSErrorCode::Failure;
-}
-
-PSErrorCode PersistentStorageSecure::DeserializeUIDMap(const Byte *buff, size_t buffSize)
-{
-	UidMap::ElementCounterType mapSize{ 0 };
-	UidMap::ElementCounterType offset{ 0 };
-	SerializedUIDType key{ 0 };
-	char value[PersistentStorageNode::kMaxKeyNameLength] = { 0 };
-
-	memcpy(&mapSize, buff + offset, sizeof(mapSize));
-	offset += sizeof(mapSize);
-
-	for (uint16_t element = 0; element < mapSize; ++element) {
-		memcpy(&key, buff + offset, sizeof(key));
-		offset += sizeof(key);
-		strcpy(value, buff + offset);
-		offset += strlen(value) + 1;
-		sUidMap.Insert(static_cast<psa_storage_uid_t>(key), StringWrapper(value));
-	}
-
-	/* The stored size shall equal the resulting size. */
-	if (sUidMap.Size() != mapSize) {
-		return PSErrorCode::Failure;
-	}
-
-	return PSErrorCode::Success;
-}
-
-bool PersistentStorageSecure::HasEntry(PersistentStorageNode *node, psa_storage_uid_t &uid)
-{
 	char key[PersistentStorageNode::kMaxKeyNameLength];
-	bool alreadyInTheMap{ false };
+	char path[SETTINGS_MAX_NAME_LEN + 1];
 
-	if (node->GetKey(key)) {
-		uid = UIDFromString(key, &alreadyInTheMap);
+	if (!mRootNode->GetKey(key)) {
+		return PSErrorCode::Failure;
 	}
 
-	return alreadyInTheMap;
+	int ret = snprintf(path, sizeof(path), "%s/%s", CUSTOM_STORAGE_PREFIX, key);
+	if (ret < 0 || (size_t)ret >= sizeof(path)) {
+		return PSErrorCode::Failure;
+	}
+
+	DeleteSubtreeEntry entry{ path, 0 };
+	int result = settings_load_subtree_direct(path, DeleteSubtreeCallback, &entry);
+
+	if (result == 0 && entry.result == 0) {
+		return PSErrorCode::Success;
+	}
+
+	return PSErrorCode::Failure;
 }
 
 } /* namespace Nrf */
